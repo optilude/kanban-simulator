@@ -1,6 +1,7 @@
 import abc
 import itertools
 import copy
+import collections
 
 #
 # Interfaces
@@ -249,12 +250,12 @@ class Board(TimeAware, PullCapable, CardContainer):
             'done': self.donelog.to_html(),
         }
 
-class Backlog(QueueCardSource):
+class Backlog(ChainingQueueCardSource):
     """A FIFO backlog
     """
 
-    def __init__(self, name="Backlog", cards=None):
-        super(Backlog, self).__init__(name, cards)
+    def __init__(self, name="Backlog", cards=None, card_source=None):
+        super(Backlog, self).__init__(name, cards, card_source)
 
     def __repr__(self):
         return "<Backlog %s>" % self.name
@@ -309,11 +310,11 @@ class Lane(TimeAware, CardContainer, PullCapable):
 
         self.wip_limit = wip_limit
 
-    def clone(self, name=None):
+    def clone(self, name=None, backlog=None):
         lane = copy.copy(self)
 
         lane.columns = [c.clone() for c in self.columns]
-        lane.backlog = self.backlog
+        lane.backlog = backlog if backlog is not None else self.backlog
         lane.donelog = Donelog(name=self.name + " Done")
 
         if name is not None:
@@ -603,7 +604,7 @@ class Card(TimeAware, LocationAware):
         self.dates = []
 
         self.location = None  # current CardContainer
-        self.history = {}     # column -> {'touch': <work duration>, 'age': <total time in column>, 'dates': <list of dates>}
+        self.history = collections.OrderedDict()  # column -> {'touch': <work duration>, 'age': <total time in column>, 'dates': <list of dates>}
 
     def _new_record(self):
         return {'touch': 0, 'age': 0, 'dates': []}

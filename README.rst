@@ -167,5 +167,9 @@ Currently no GUI, but works well in a Jupyter/iPython Notebook, like
 Changelog
 ---------
 
+0.2 - 24 May 2016
+    * Card `history` is now an OrderedDict
+    * A backlog can now have a chained "parent" backlog via `card_source`
+
 0.1 - 24 May 2016
     * Initial release
