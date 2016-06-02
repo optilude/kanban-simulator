@@ -67,8 +67,12 @@ class PullCapable(object):
     __metaclass__ = abc.ABCMeta
 
     @abc.abstractmethod
-    def pull(self):
-        """Attempt to pull a card from the card source
+    def pull(self, check=None):
+        """Attempt to pull one or more cards from the card source.
+
+        If check is given, it should be a callable that takes as a parameter
+        the `PullCapable` instance and returns True/False to decide if pulling
+        should be allowed.
         """
 
 #
@@ -213,10 +217,10 @@ class Board(TimeAware, PullCapable, CardContainer):
         for lane in self.lanes:
             lane.tick(date)
 
-    def pull(self):
-        self.donelog.pull()
+    def pull(self, check=None):
+        self.donelog.pull(check)
         for lane in self.lanes:
-            lane.pull()
+            lane.pull(check)
 
     @property
     def cards(self):
@@ -246,7 +250,7 @@ class Board(TimeAware, PullCapable, CardContainer):
         </table>
         """ % {
             'backlog': self.backlog.to_html(),
-            'lanes': '<br />\n'.join((l.to_html() for l in self.lanes)),
+            'lanes': '<br />\n'.join((l.to_html(show_backlog=(l.backlog is not self.backlog)) for l in self.lanes)),
             'done': self.donelog.to_html(),
         }
 
@@ -280,9 +284,12 @@ class Donelog(ChainingQueueCardSource, PullCapable):
     def __repr__(self):
         return "<Donelog %s>" % self.name
 
-    def pull(self):
+    def pull(self, check=None):
         # Greedily pull cards
         while True:
+            if check is not None and not check(self):
+                break
+
             card = self.card_source.next_card()
 
             if card is None:
@@ -339,8 +346,11 @@ class Lane(TimeAware, CardContainer, PullCapable):
         for column in self.columns:
             column.tick(date)
 
-    def pull(self):
-        self.donelog.pull()
+    def pull(self, check=None):
+        self.donelog.pull(check)
+
+        # TODO: Implement custom check
+
 
         columns = self.columns
         if self.wip_limit is not None:
@@ -350,7 +360,7 @@ class Lane(TimeAware, CardContainer, PullCapable):
                 columns = columns[1:]
 
         for c in reversed(columns):
-            c.pull()
+            c.pull(check)
 
     @property
     def cards(self):
@@ -431,8 +441,11 @@ class Column(TimeAware, PullCapable, CardContainer, CardSource):
         for card in self.cards:
             card.tick(date)
 
-    def pull(self):
+    def pull(self, check=None):
         while True:
+            if check is not None and not check(self):
+                break
+
             if self.wip_limit is not None and len(self.cards) >= self.wip_limit:
                 break
 
@@ -444,7 +457,7 @@ class Column(TimeAware, PullCapable, CardContainer, CardSource):
             card.pull_to(self)
 
             # crystal ball time...
-            card.record_touch(self, self.touch() if callable(self.touch) else self.touch)
+            card.record_touch(self, self.touch(card) if callable(self.touch) else self.touch)
 
     def next_card(self, card_type=None):
         if len(self.cards) == 0:
@@ -546,11 +559,14 @@ class SublaneColumn(Column):
             lane.backlog.tick(date)  # tick the epic card
             lane.tick(date)  # tick everything in the lane
 
-    def pull(self):
+    def pull(self, check=None):
         for lane in self.lanes:
-            lane.pull()
+            lane.pull(check)
 
         while True:
+            if check is not None and not check(self):
+                break
+
             if self.wip_limit is not None and len(self.lanes) >= self.wip_limit:
                 break
 
@@ -562,7 +578,7 @@ class SublaneColumn(Column):
             lane = self.lane_template.clone()
             lane.backlog = card
             lane.wire()
-            lane.pull()
+            lane.pull(check)
 
             self.lanes.append(lane)
             card.pull_to(self)
@@ -586,6 +602,112 @@ class SublaneColumn(Column):
 
     def to_html(self):
         return "<br />\n".join((l.to_html(show_backlog=True) for l in self.lanes))
+
+class SharedWIPColumn(Column):
+    """A column that groups several other columns to share a WIP limit
+
+    name:          name of the column
+    columns:       a list of column instances
+    wip_limit:     WIP limit, aka number of lanes
+    card_source:   the CardSource where this column pulls from
+
+    It is normally not necessary to set card_source, because it is set when
+    the Board is wired up in the constructor.
+
+    Most operations are delegated to the child columns.
+    """
+
+    def __init__(self, name, columns, wip_limit, card_source=None):
+        self.name = name
+        self.columns = columns
+        self.wip_limit = wip_limit
+        self.card_source = card_source
+
+        self.wire()
+
+    def clone(self):
+        column = copy.copy(self)
+        column.columns = [c.clone() for c in self.columns]
+        column.wire(force=True)
+        return column
+
+    def wire(self, force=False):
+        source = self.card_source
+
+        for column in self.columns:
+            column.lane = self
+            if column.card_source is None or force:
+                column.card_source = source
+            source = column
+
+    @property
+    def cards(self):
+        return list(itertools.chain(*(c.cards for c in self.columns)))
+
+    def card_source():
+
+        def fget(self):
+            return self.columns[0].card_source
+
+        def fset(self, value):
+            self.columns[0].card_source = value
+
+        def fdel(self):
+            del self.columns[0].card_source
+
+        return locals()
+    card_source = property(**card_source())
+
+    @property
+    def is_empty(self):
+        return all((c.is_empty for c in self.columns))
+
+    def tick(self, date):
+        for column in self.columns:
+            column.tick(date)
+
+    def pull(self, check=None):
+        columns = self.columns
+
+        # TODO: Implement custom check
+
+        if self.wip_limit is not None:
+            total = sum((len(list(c.cards)) for c in self.columns))
+            if total >= self.wip_limit:
+                # don't start new work in the lane if we are over the WIP limit
+                columns = columns[1:]
+
+        for c in reversed(columns):
+            c.pull(check)
+
+    def next_card(self, card_type=None):
+        return self.columns[-1].next_card(card_type=card_type)
+
+    def __repr__(self):
+        return "<SharedWIPColumn %s>" % self.name
+
+    def to_html(self):
+
+        def column_header(col):
+            wip_limit = getattr(col, 'wip_limit', None)
+            if wip_limit:
+                return "%s (%d)" % (col.name, wip_limit,)
+            return col.name
+
+        return """
+        <table class='lane'>
+            <thead>
+                <tr>%(headers)s</tr>
+            </thead>
+            <tbody>
+                <tr>%(columns)s</tr>
+            </tbody>
+        </table>
+        """ % {
+            'headers': "\n".join(("<th>%s</th>" % column_header(c) for c in self.columns)),
+            'columns': "\n".join(("<td>%s</td>" % c.to_html() for c in self.columns)),
+        }
+
 
 #
 # Cards
@@ -655,9 +777,11 @@ class Epic(Card, QueueCardSource):
         super(Epic, self).pull_to(location)
 
         if location is not None and location.name in self.splits:
+            split = self.splits[location.name]
+
             self.cards.extend([
                 Story("%s-%02d" % (self.name, i + 1,), parent_epic=self)
-                for i in range(self.splits[location.name])
+                for i in range(split(self) if callable(split) else split)
             ])
 
     def __repr__(self):

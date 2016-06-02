@@ -167,6 +167,14 @@ Currently no GUI, but works well in a Jupyter/iPython Notebook, like
 Changelog
 ---------
 
+0.3 -
+    * Card splits can now be either a callable or a number (analogous to
+      `touch`)
+    * BREAKING: If `touch` or a `splits` value is a function, it will be called with the
+      card as an argument.
+    * New column type, SharedWIPColumn(), which can group multiple columns so
+      that they have a shared overall WIP limit.
+
 0.2 - 24 May 2016
     * Card `history` is now an OrderedDict
     * A backlog can now have a chained "parent" backlog via `card_source`
