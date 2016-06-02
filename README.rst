@@ -167,13 +167,15 @@ Currently no GUI, but works well in a Jupyter/iPython Notebook, like
 Changelog
 ---------
 
-0.3 -
-    * Card splits can now be either a callable or a number (analogous to
-      `touch`)
+0.3 - 03 June 2016
     * BREAKING: If `touch` or a `splits` value is a function, it will be called with the
       card as an argument.
+    * Card splits can now be either a callable or a number (analogous to
+      `touch`)
     * New column type, SharedWIPColumn(), which can group multiple columns so
       that they have a shared overall WIP limit.
+    * Fixed problem whereby lane WIP limits could be ignored in the first
+      column
 
 0.2 - 24 May 2016
     * Card `history` is now an OrderedDict

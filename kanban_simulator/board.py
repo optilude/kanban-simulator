@@ -224,7 +224,7 @@ class Board(TimeAware, PullCapable, CardContainer):
 
     @property
     def cards(self):
-        return itertools.chain(self.backlog.cards, *(l.cards for l in self.lanes))
+        return list(itertools.chain(self.backlog.cards, *(l.cards for l in self.lanes)))
 
     @property
     def is_empty(self):
@@ -349,22 +349,27 @@ class Lane(TimeAware, CardContainer, PullCapable):
     def pull(self, check=None):
         self.donelog.pull(check)
 
-        # TODO: Implement custom check
-
-
-        columns = self.columns
         if self.wip_limit is not None:
-            total = sum((len(list(c.cards)) for c in self.columns))
-            if total >= self.wip_limit:
-                # don't start new work in the lane if we are over the WIP limit
-                columns = columns[1:]
+            # Other than the first column, we can pull freely within the lane
+            for c in reversed(self.columns[1:]):
+                c.pull(check)
 
-        for c in reversed(columns):
-            c.pull(check)
+            # We constrain WIP at the first column
+            current_total = sum((len(c.cards) for c in self.columns))
+            new_allowed = self.wip_limit - current_total
+            allowed_start_column = new_allowed + len(self.columns[0].cards)
+
+            wip_check = lambda c: len(c.cards) < allowed_start_column and (check is None or check(c))
+
+            self.columns[0].pull(wip_check)
+        else:
+            for c in reversed(self.columns):
+                c.pull(check)
+
 
     @property
     def cards(self):
-        return itertools.chain(self.backlog.cards, *(c.cards for c in self.columns))
+        return list(itertools.chain(self.backlog.cards, *(c.cards for c in self.columns)))
 
     @property
     def is_empty(self):
@@ -548,7 +553,7 @@ class SublaneColumn(Column):
 
     @property
     def cards(self):
-        return (l.backlog for l in self.lanes)
+        return [l.backlog for l in self.lanes]
 
     @property
     def is_empty(self):
@@ -667,18 +672,22 @@ class SharedWIPColumn(Column):
             column.tick(date)
 
     def pull(self, check=None):
-        columns = self.columns
-
-        # TODO: Implement custom check
-
         if self.wip_limit is not None:
-            total = sum((len(list(c.cards)) for c in self.columns))
-            if total >= self.wip_limit:
-                # don't start new work in the lane if we are over the WIP limit
-                columns = columns[1:]
+            # Other than the first column, we can pull freely within the lane
+            for c in reversed(self.columns[1:]):
+                c.pull(check)
 
-        for c in reversed(columns):
-            c.pull(check)
+            # We constrain WIP at the first column
+            current_total = sum((len(c.cards) for c in self.columns))
+            new_allowed = self.wip_limit - current_total
+            allowed_start_column = new_allowed + len(self.columns[0].cards)
+
+            wip_check = lambda c: len(c.cards) < allowed_start_column and (check is None or check(c))
+
+            self.columns[0].pull(wip_check)
+        else:
+            for c in reversed(self.columns):
+                c.pull(check)
 
     def next_card(self, card_type=None):
         return self.columns[-1].next_card(card_type=card_type)
